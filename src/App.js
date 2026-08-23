@@ -823,7 +823,7 @@ const LoginPage = ({ onLogin, db, setDb }) => {
 // ============================================================
 const NAV = {
   superadmin: [
-    { section: "Overview", items: [{ key: "dashboard", label: "Dashboard", icon: "📊" }] },
+    { section: "Overview", items: [{ key: "dashboard", label: "Dashboard", icon: "📊" }, { key: "approvals", label: "User Approvals", icon: "✅" }] },
     { section: "Management", items: [{ key: "students", label: "Students", icon: "👨‍🎓" }, { key: "teachers", label: "Teachers", icon: "👨‍🏫" }, { key: "classes", label: "Classes", icon: "🏛️" }, { key: "subjects", label: "Subjects", icon: "📚" }] },
     { section: "Academics", items: [{ key: "sessions", label: "Academic Sessions", icon: "📅" }, { key: "assessments", label: "Assessments", icon: "📝" }, { key: "scores", label: "Score Management", icon: "🎯" }, { key: "results", label: "Results", icon: "📋" }, { key: "attendance", label: "Attendance", icon: "✅" }, { key: "reportcards", label: "Report Cards", icon: "📄" }] },
     { section: "Configuration", items: [{ key: "grading", label: "Grading System", icon: "⭐" }, { key: "analytics", label: "Analytics", icon: "📈" }, { key: "auditlogs", label: "Audit Logs", icon: "🔍" }] },
@@ -851,9 +851,10 @@ const NAV = {
 // ============================================================
 // SIDEBAR COMPONENT
 // ============================================================
-const Sidebar = ({ user, currentPage, onNav, isOpen }) => {
+const Sidebar = ({ user, currentPage, onNav, isOpen, db }) => {
   const nav = NAV[user.role] || NAV.student;
   const initials = user.name.split(" ").map(n => n[0]).join("").slice(0, 2);
+  const pendingCount = db ? db.users.filter(u => u.status === "pending").length : 0;
   return (
     <aside className={`sidebar ${isOpen ? "open" : ""}`}>
       <div className="sidebar-brand">
@@ -869,7 +870,11 @@ const Sidebar = ({ user, currentPage, onNav, isOpen }) => {
             <div className="nav-section-label">{section.section}</div>
             {section.items.map(item => (
               <div key={item.key} className={`nav-item ${currentPage === item.key ? "active" : ""}`} onClick={() => onNav(item.key)}>
-                <span className="nav-icon">{item.icon}</span> {item.label}
+                <span className="nav-icon">{item.icon}</span>
+                <span style={{ flex: 1 }}>{item.label}</span>
+                {item.key === "approvals" && pendingCount > 0 && (
+                  <span style={{ background: "#E74C3C", color: "#fff", borderRadius: 20, padding: "1px 7px", fontSize: 10, fontWeight: 800, marginLeft: 4 }}>{pendingCount}</span>
+                )}
               </div>
             ))}
           </div>
@@ -891,7 +896,7 @@ const Sidebar = ({ user, currentPage, onNav, isOpen }) => {
 // ============================================================
 // DASHBOARD PAGE
 // ============================================================
-const DashboardPage = ({ user, db }) => {
+const DashboardPage = ({ user, db, setDb }) => {
   const currentSession = db.academicSessions.find(s => s.isCurrent);
   const currentTerm = db.terms.find(t => t.isCurrent);
   const activeStudents = db.students.filter(s => s.status === "active").length;
@@ -1006,25 +1011,88 @@ const DashboardPage = ({ user, db }) => {
       </div>
 
       {/* PENDING ACCOUNTS APPROVAL */}
-      {db.users.filter(u => u.status === "pending").length > 0 && (
-        <div className="card" style={{ marginTop: 20, border: `1px solid #FCD34D` }}>
-          <div className="card-body">
-            <div className="card-title" style={{ color: "#92400E" }}>⏳ Pending Account Approvals ({db.users.filter(u => u.status === "pending").length})</div>
-            {db.users.filter(u => u.status === "pending").map(u => (
-              <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F0F4F8", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                  <div className="avatar" style={{ fontSize: 12, background: "#92400E" }}>{u.name.split(" ").map(n => n[0]).join("").slice(0,2)}</div>
-                  <div><div style={{ fontSize: 13, fontWeight: 700 }}>{u.name}</div><div style={{ fontSize: 11, color: COLORS.textLight }}>{u.email} · @{u.username} · {u.role}</div></div>
+      <PendingApprovals db={db} setDb={setDb} />
+    </div>
+  );
+};
+
+// ============================================================
+// PENDING APPROVALS COMPONENT (standalone so setDb always works)
+// ============================================================
+const PendingApprovals = ({ db, setDb }) => {
+  const pending = db.users.filter(u => u.status === "pending");
+  if (pending.length === 0) return null;
+
+  const approveUser = (u) => {
+    setDb(prev => ({
+      ...prev,
+      users: prev.users.map(x => x.id === u.id ? { ...x, status: "active" } : x)
+    }));
+    toast(`✅ ${u.name} approved! They can now log in.`, "success");
+  };
+
+  const rejectUser = (u) => {
+    setDb(prev => ({
+      ...prev,
+      users: prev.users.map(x => x.id === u.id ? { ...x, status: "inactive" } : x)
+    }));
+    toast(`❌ ${u.name}'s account rejected.`, "danger");
+  };
+
+  const roleColors = {
+    admin: { bg: "#DBEAFE", color: "#1D4ED8" },
+    teacher: { bg: "#D1FAE5", color: "#065F46" },
+    student: { bg: "#FEF3C7", color: "#92400E" },
+    parent: { bg: "#FCE7F3", color: "#9D174D" },
+  };
+
+  return (
+    <div className="card" style={{ marginTop: 20, border: "2px solid #FCD34D", borderRadius: 12 }}>
+      <div style={{ background: "#FEF3C7", padding: "14px 20px", borderBottom: "1px solid #FCD34D", display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+          <span style={{ fontSize: 20 }}>⏳</span>
+          <span style={{ fontWeight: 800, fontSize: 15, color: "#92400E" }}>Pending Account Approvals</span>
+        </div>
+        <span style={{ background: "#92400E", color: "#fff", borderRadius: 20, padding: "2px 10px", fontSize: 13, fontWeight: 700 }}>{pending.length}</span>
+      </div>
+      <div style={{ padding: "4px 0" }}>
+        {pending.map((u, i) => {
+          const rc = roleColors[u.role] || { bg: "#F3F4F6", color: "#6B7280" };
+          return (
+            <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "14px 20px", borderBottom: i < pending.length - 1 ? "1px solid #F0F4F8" : "none", gap: 12, flexWrap: "wrap" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 12, flex: 1, minWidth: 0 }}>
+                <div style={{ width: 42, height: 42, borderRadius: "50%", background: COLORS.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 14, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                  {u.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
                 </div>
-                <div style={{ display: "flex", gap: 6 }}>
-                  <button className="btn btn-success btn-sm" onClick={() => { setDb(d => ({ ...d, users: d.users.map(x => x.id === u.id ? { ...x, status: "active" } : x) })); toast(`${u.name} approved!`, "success"); }}>✅ Approve</button>
-                  <button className="btn btn-danger btn-sm" onClick={() => { setDb(d => ({ ...d, users: d.users.map(x => x.id === u.id ? { ...x, status: "inactive" } : x) })); toast(`${u.name} rejected.`); }}>❌ Reject</button>
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontSize: 14, fontWeight: 700, color: COLORS.text }}>{u.name}</div>
+                  <div style={{ fontSize: 12, color: COLORS.textLight, marginTop: 2 }}>@{u.username} · {u.email}</div>
+                  <div style={{ marginTop: 4 }}>
+                    <span style={{ background: rc.bg, color: rc.color, borderRadius: 20, padding: "2px 10px", fontSize: 11, fontWeight: 700, textTransform: "capitalize" }}>{u.role}</span>
+                    {u.createdAt && <span style={{ fontSize: 11, color: COLORS.textLight, marginLeft: 8 }}>Registered: {new Date(u.createdAt).toLocaleDateString()}</span>}
+                  </div>
                 </div>
               </div>
-            ))}
-          </div>
-        </div>
-      )}
+              <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+                <button
+                  className="btn btn-success"
+                  style={{ padding: "8px 16px", fontSize: 13 }}
+                  onClick={() => approveUser(u)}
+                >
+                  ✅ Approve
+                </button>
+                <button
+                  className="btn btn-danger"
+                  style={{ padding: "8px 16px", fontSize: 13 }}
+                  onClick={() => rejectUser(u)}
+                >
+                  ❌ Reject
+                </button>
+              </div>
+            </div>
+          );
+        })}
+      </div>
     </div>
   );
 };
@@ -2263,6 +2331,141 @@ const SessionsPage = ({ user, db, setDb }) => {
 };
 
 // ============================================================
+// USER APPROVALS PAGE
+// ============================================================
+const ApprovalsPage = ({ db, setDb }) => {
+  const [filter, setFilter] = useState("pending");
+
+  const allSignups = db.users.filter(u => !["superadmin"].includes(u.role));
+  const displayed = allSignups.filter(u => filter === "all" ? true : u.status === filter);
+
+  const approveUser = (u) => {
+    setDb(prev => ({ ...prev, users: prev.users.map(x => x.id === u.id ? { ...x, status: "active" } : x) }));
+    toast(`✅ ${u.name} approved successfully!`, "success");
+  };
+  const rejectUser = (u) => {
+    setDb(prev => ({ ...prev, users: prev.users.map(x => x.id === u.id ? { ...x, status: "inactive" } : x) }));
+    toast(`${u.name}'s account rejected.`, "danger");
+  };
+  const reactivate = (u) => {
+    setDb(prev => ({ ...prev, users: prev.users.map(x => x.id === u.id ? { ...x, status: "active" } : x) }));
+    toast(`${u.name} reactivated.`, "success");
+  };
+
+  const statusBadge = (status) => {
+    const map = { active: "badge-success", pending: "badge-warning", inactive: "badge-danger" };
+    return <span className={`badge ${map[status] || "badge-gray"}`}>{status}</span>;
+  };
+
+  const roleBadge = (role) => {
+    const map = { admin: "badge-info", teacher: "badge-success", student: "badge-warning", parent: "badge-purple" };
+    return <span className={`badge ${map[role] || "badge-gray"}`} style={{ textTransform: "capitalize" }}>{role}</span>;
+  };
+
+  const counts = {
+    all: allSignups.length,
+    pending: allSignups.filter(u => u.status === "pending").length,
+    active: allSignups.filter(u => u.status === "active").length,
+    inactive: allSignups.filter(u => u.status === "inactive").length,
+  };
+
+  return (
+    <div>
+      <div className="section-heading">
+        <div>
+          <div className="section-title">User Approvals & Management ✅</div>
+          <div className="section-desc">Approve, reject or manage all registered user accounts</div>
+        </div>
+      </div>
+
+      {/* SUMMARY CARDS */}
+      <div className="stat-grid" style={{ marginBottom: 20 }}>
+        {[["All Users", counts.all, "#DBEAFE", "all"], ["Pending", counts.pending, "#FEF3C7", "pending"], ["Active", counts.active, "#D1FAE5", "active"], ["Inactive", counts.inactive, "#FEE2E2", "inactive"]].map(([label, val, bg, key]) => (
+          <div key={key} className="stat-card" style={{ cursor: "pointer", border: filter === key ? `2px solid ${COLORS.primary}` : "1px solid #DDE3EE" }} onClick={() => setFilter(key)}>
+            <div className="stat-icon" style={{ background: bg }}>👤</div>
+            <div>
+              <div className="stat-label">{label}</div>
+              <div className="stat-value">{val}</div>
+            </div>
+          </div>
+        ))}
+      </div>
+
+      <div className="table-card">
+        <div className="table-header">
+          <span className="table-title">
+            {filter === "pending" && "⏳ "}
+            {filter === "active" && "✅ "}
+            {filter === "inactive" && "❌ "}
+            {filter.charAt(0).toUpperCase() + filter.slice(1)} Users ({displayed.length})
+          </span>
+        </div>
+        <div className="table-scroll">
+          <table>
+            <thead>
+              <tr>
+                <th>#</th>
+                <th>Name</th>
+                <th>Username</th>
+                <th>Role</th>
+                <th>Email</th>
+                <th>Status</th>
+                <th>Registered</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              {displayed.length === 0 ? (
+                <tr><td colSpan={8}>
+                  <div className="empty-state">
+                    <div className="empty-icon">👤</div>
+                    <div className="empty-title">No {filter} users</div>
+                    <div className="empty-desc">No accounts match this filter</div>
+                  </div>
+                </td></tr>
+              ) : displayed.map((u, i) => (
+                <tr key={u.id}>
+                  <td style={{ color: COLORS.textLight, fontSize: 12 }}>{i + 1}</td>
+                  <td>
+                    <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                      <div style={{ width: 34, height: 34, borderRadius: "50%", background: COLORS.primary, display: "flex", alignItems: "center", justifyContent: "center", fontSize: 12, fontWeight: 800, color: "#fff", flexShrink: 0 }}>
+                        {u.name.split(" ").map(n => n[0]).join("").slice(0, 2).toUpperCase()}
+                      </div>
+                      <div className="td-name">{u.name}</div>
+                    </div>
+                  </td>
+                  <td><span className="tag">@{u.username}</span></td>
+                  <td>{roleBadge(u.role)}</td>
+                  <td style={{ fontSize: 12, color: COLORS.textLight }}>{u.email}</td>
+                  <td>{statusBadge(u.status)}</td>
+                  <td style={{ fontSize: 12, color: COLORS.textLight }}>{u.createdAt ? new Date(u.createdAt).toLocaleDateString() : "—"}</td>
+                  <td>
+                    <div style={{ display: "flex", gap: 6, flexWrap: "wrap" }}>
+                      {u.status === "pending" && (
+                        <>
+                          <button className="btn btn-success btn-sm" onClick={() => approveUser(u)}>✅ Approve</button>
+                          <button className="btn btn-danger btn-sm" onClick={() => rejectUser(u)}>❌ Reject</button>
+                        </>
+                      )}
+                      {u.status === "active" && (
+                        <button className="btn btn-outline btn-sm" onClick={() => rejectUser(u)}>🚫 Deactivate</button>
+                      )}
+                      {u.status === "inactive" && (
+                        <button className="btn btn-success btn-sm" onClick={() => reactivate(u)}>♻️ Reactivate</button>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  );
+};
+
+// ============================================================
 // AUDIT LOGS PAGE
 // ============================================================
 const AuditLogsPage = ({ db }) => {
@@ -2315,7 +2518,7 @@ export default function App() {
     return () => document.head.removeChild(style);
   }, []);
 
-  const pageTitles = { dashboard: "Dashboard", students: "Students", teachers: "Teachers", classes: "Classes", subjects: "Subjects", sessions: "Academic Sessions", assessments: "Assessments", scores: "Score Entry", results: "Results", attendance: "Attendance", reportcards: "Report Cards", grading: "Grading System", analytics: "Analytics", auditlogs: "Audit Logs" };
+  const pageTitles = { dashboard: "Dashboard", approvals: "User Approvals", students: "Students", teachers: "Teachers", classes: "Classes", subjects: "Subjects", sessions: "Academic Sessions", assessments: "Assessments", scores: "Score Entry", results: "Results", attendance: "Attendance", reportcards: "Report Cards", grading: "Grading System", analytics: "Analytics", auditlogs: "Audit Logs" };
 
   const handleLogout = () => { setUser(null); setCurrentPage("dashboard"); setSidebarOpen(false); };
 
@@ -2328,6 +2531,7 @@ export default function App() {
   const renderPage = () => {
     switch (currentPage) {
       case "dashboard": return <DashboardPage {...pageProps} />;
+      case "approvals": return <ApprovalsPage db={db} setDb={setDb} />;
       case "students": return <StudentsPage {...pageProps} />;
       case "teachers": return <TeachersPage {...pageProps} />;
       case "classes": return <ClassesPage {...pageProps} />;
@@ -2350,7 +2554,7 @@ export default function App() {
       <ToastContainer />
       <div className="app-root">
         <div className={`sidebar-overlay ${sidebarOpen ? "show" : ""}`} onClick={() => setSidebarOpen(false)} />
-        <Sidebar user={user} currentPage={currentPage} onNav={handleNav} isOpen={sidebarOpen} />
+        <Sidebar user={user} currentPage={currentPage} onNav={handleNav} isOpen={sidebarOpen} db={db} />
         <div className={`main-content ${sidebarOpen ? "" : ""}`}>
           <header className="topbar">
             <div className="topbar-left">
