@@ -31,7 +31,7 @@ const COLORS = {
 // ============================================================
 const initialDB = {
   users: [
-    { id: 1, username: "superadmin", password: "admin123", role: "superadmin", name: "Super Administrator", email: "super@school.edu.ng", status: "active" },
+    { id: 1, username: "Waleedunslaw", password: "Waleed2020", role: "superadmin", name: "Super Administrator", email: "super@school.edu.ng", status: "active" },
     { id: 2, username: "schooladmin", password: "admin123", role: "admin", name: "School Administrator", email: "admin@school.edu.ng", status: "active" },
     { id: 3, username: "teacher1", password: "teacher123", role: "teacher", name: "Alhaji Musa Ibrahim", email: "musa@school.edu.ng", teacherId: 1, status: "active" },
     { id: 4, username: "teacher2", password: "teacher123", role: "teacher", name: "Mrs. Hauwa Aliyu", email: "hauwa@school.edu.ng", teacherId: 2, status: "active" },
@@ -501,12 +501,24 @@ select.form-control { cursor: pointer; }
   width: 100%; max-width: 420px;
   box-shadow: 0 24px 64px rgba(0,0,0,0.3);
 }
-.login-logo { width: 64px; height: 64px; border-radius: 16px; background: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 28px; font-weight: 800; color: #fff; margin: 0 auto 12px; }
-.login-title { font-size: 22px; font-weight: 800; text-align: center; color: var(--text); }
+.login-logo { width: 72px; height: 72px; border-radius: 20px; background: var(--primary); display: flex; align-items: center; justify-content: center; font-size: 32px; font-weight: 800; color: #fff; margin: 0 auto 16px; box-shadow: 0 8px 24px rgba(27,79,138,0.4); }
+.login-title { font-size: 24px; font-weight: 800; text-align: center; color: var(--text); }
 .login-sub { font-size: 13px; color: var(--text-light); text-align: center; margin-bottom: 28px; }
-.demo-accounts { background: var(--bg); border-radius: 8px; padding: 12px; margin-bottom: 20px; font-size: 12px; }
-.demo-accounts strong { display: block; margin-bottom: 6px; color: var(--text-mid); }
-.demo-row { display: flex; justify-content: space-between; padding: 3px 0; color: var(--text-mid); }
+.auth-tabs { display: flex; background: var(--bg); border-radius: 10px; padding: 4px; margin-bottom: 24px; }
+.auth-tab { flex: 1; padding: 8px; text-align: center; font-size: 13px; font-weight: 600; border-radius: 8px; cursor: pointer; color: var(--text-light); transition: all 0.2s; border: none; background: none; }
+.auth-tab.active { background: var(--surface); color: var(--primary); box-shadow: 0 2px 8px rgba(0,0,0,0.1); }
+.role-select-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-bottom: 20px; }
+.role-option { border: 2px solid var(--border); border-radius: 10px; padding: 10px 8px; text-align: center; cursor: pointer; transition: all 0.15s; background: var(--surface); }
+.role-option:hover { border-color: var(--primary); background: #EFF6FF; }
+.role-option.selected { border-color: var(--primary); background: #EFF6FF; }
+.role-option-icon { font-size: 22px; margin-bottom: 4px; }
+.role-option-label { font-size: 12px; font-weight: 700; color: var(--text-mid); }
+.role-option.selected .role-option-label { color: var(--primary); }
+.auth-divider { text-align: center; color: var(--text-light); font-size: 12px; margin: 16px 0; position: relative; }
+.auth-divider::before, .auth-divider::after { content: ""; position: absolute; top: 50%; width: 40%; height: 1px; background: var(--border); }
+.auth-divider::before { left: 0; }
+.auth-divider::after { right: 0; }
+.pending-notice { background: #FEF3C7; border: 1px solid #FCD34D; border-radius: 8px; padding: 10px 14px; font-size: 12px; color: #92400E; margin-bottom: 16px; }
 
 /* PAGINATION */
 .pagination { display: flex; gap: 4px; align-items: center; justify-content: flex-end; padding: 12px 16px; }
@@ -637,51 +649,170 @@ const Confirm = ({ message, onConfirm, onCancel }) => (
 );
 
 // ============================================================
-// LOGIN PAGE
+// AUTH PAGE (LOGIN + SIGNUP)
 // ============================================================
-const LoginPage = ({ onLogin }) => {
-  const [form, setForm] = useState({ username: "", password: "" });
+const LoginPage = ({ onLogin, db, setDb }) => {
+  const [tab, setTab] = useState("login");
+  const [loginForm, setLoginForm] = useState({ username: "", password: "" });
+  const [signupForm, setSignupForm] = useState({ name: "", username: "", email: "", phone: "", password: "", confirmPassword: "", role: "student", gender: "Male", admNo: "", staffId: "", qualification: "" });
   const [error, setError] = useState("");
+  const [success, setSuccess] = useState("");
   const [loading, setLoading] = useState(false);
+  const [showPass, setShowPass] = useState(false);
 
-  const handleSubmit = () => {
-    setLoading(true);
+  const roles = [
+    { key: "admin", label: "Admin", icon: "🏫" },
+    { key: "teacher", label: "Teacher", icon: "👨‍🏫" },
+    { key: "student", label: "Student", icon: "👨‍🎓" },
+    { key: "parent", label: "Parent", icon: "👨‍👧" },
+  ];
+
+  const handleLogin = () => {
     setError("");
+    if (!loginForm.username || !loginForm.password) { setError("Please enter username and password."); return; }
+    setLoading(true);
     setTimeout(() => {
-      const user = initialDB.users.find(u => u.username === form.username && u.password === form.password);
-      if (user) { onLogin(user); }
-      else { setError("Invalid username or password."); }
+      const user = db.users.find(u => u.username === loginForm.username && u.password === loginForm.password);
+      if (!user) { setError("Invalid username or password. Please try again."); setLoading(false); return; }
+      if (user.status === "pending") { setError("Your account is pending admin approval. Please wait."); setLoading(false); return; }
+      if (user.status === "inactive") { setError("Your account has been deactivated. Contact admin."); setLoading(false); return; }
+      onLogin(user);
       setLoading(false);
-    }, 600);
+    }, 700);
+  };
+
+  const handleSignup = () => {
+    setError(""); setSuccess("");
+    const { name, username, email, password, confirmPassword, role } = signupForm;
+    if (!name || !username || !email || !password) { setError("Please fill in all required fields."); return; }
+    if (password.length < 6) { setError("Password must be at least 6 characters."); return; }
+    if (password !== confirmPassword) { setError("Passwords do not match."); return; }
+    if (db.users.find(u => u.username === username)) { setError("Username already taken. Choose another."); return; }
+    if (db.users.find(u => u.email === email)) { setError("Email already registered."); return; }
+    setLoading(true);
+    setTimeout(() => {
+      const newUser = {
+        id: generateId(db.users),
+        username, password, email,
+        name, role,
+        phone: signupForm.phone,
+        gender: signupForm.gender,
+        status: role === "admin" ? "pending" : "active",
+        createdAt: new Date().toISOString(),
+      };
+      let updatedDb = { ...db, users: [...db.users, newUser] };
+
+      if (role === "teacher") {
+        const newTeacher = { id: generateId(db.teachers), userId: newUser.id, staffId: signupForm.staffId || `TCH${String(generateId(db.teachers)).padStart(3,"0")}`, name, phone: signupForm.phone, email, gender: signupForm.gender, qualification: signupForm.qualification, status: "active", joinDate: new Date().toISOString().slice(0,10) };
+        updatedDb = { ...updatedDb, teachers: [...updatedDb.teachers, newTeacher] };
+        updatedDb.users[updatedDb.users.length - 1].teacherId = newTeacher.id;
+      }
+      if (role === "student") {
+        const newStudent = { id: generateId(db.students), userId: newUser.id, admNo: signupForm.admNo || `ADM/${new Date().getFullYear()}/${String(generateId(db.students)).padStart(3,"0")}`, name, gender: signupForm.gender, dob: "", classId: null, sessionId: 1, phone: signupForm.phone, email, address: "", status: "active", photo: null };
+        updatedDb = { ...updatedDb, students: [...updatedDb.students, newStudent] };
+        updatedDb.users[updatedDb.users.length - 1].studentId = newStudent.id;
+      }
+      if (role === "parent") {
+        const newParent = { id: generateId(db.parents), name, phone: signupForm.phone, email, address: "", occupation: "" };
+        updatedDb = { ...updatedDb, parents: [...updatedDb.parents, newParent] };
+        updatedDb.users[updatedDb.users.length - 1].parentId = newParent.id;
+      }
+
+      setDb(updatedDb);
+      setLoading(false);
+      if (role === "admin") {
+        setSuccess("✅ Account created! Awaiting Super Admin approval before you can log in.");
+      } else {
+        setSuccess("✅ Account created successfully! You can now log in.");
+      }
+      setSignupForm({ name: "", username: "", email: "", phone: "", password: "", confirmPassword: "", role: "student", gender: "Male", admNo: "", staffId: "", qualification: "" });
+      setTimeout(() => { setTab("login"); setSuccess(""); }, 2500);
+    }, 700);
   };
 
   return (
     <div className="login-page">
-      <div className="login-card">
+      <div className="login-card" style={{ maxWidth: 460 }}>
         <div className="login-logo">🏫</div>
         <div className="login-title">SBA System</div>
         <div className="login-sub">Secondary School Assessment Management</div>
-        <div className="demo-accounts">
-          <strong>🔐 Demo Accounts</strong>
-          {[["superadmin", "admin123", "Super Admin"], ["schooladmin", "admin123", "Admin"], ["teacher1", "teacher123", "Teacher"], ["student1", "student123", "Student"], ["parent1", "parent123", "Parent"]].map(([u, p, r]) => (
-            <div key={u} className="demo-row">
-              <span style={{ cursor: "pointer", color: COLORS.primary, fontWeight: 600 }} onClick={() => setForm({ username: u, password: p })}>{r}: {u}</span>
-              <span>Pass: {p}</span>
-            </div>
-          ))}
+
+        <div className="auth-tabs">
+          <button className={`auth-tab ${tab === "login" ? "active" : ""}`} onClick={() => { setTab("login"); setError(""); setSuccess(""); }}>Sign In</button>
+          <button className={`auth-tab ${tab === "signup" ? "active" : ""}`} onClick={() => { setTab("signup"); setError(""); setSuccess(""); }}>Create Account</button>
         </div>
+
         {error && <div className="alert alert-danger">⚠️ {error}</div>}
-        <div className="form-group" style={{ marginBottom: 12 }}>
-          <label>Username</label>
-          <input className="form-control" placeholder="Enter username" value={form.username} onChange={e => setForm(f => ({ ...f, username: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
-        </div>
-        <div className="form-group" style={{ marginBottom: 20 }}>
-          <label>Password</label>
-          <input className="form-control" type="password" placeholder="Enter password" value={form.password} onChange={e => setForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleSubmit()} />
-        </div>
-        <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "11px" }} onClick={handleSubmit} disabled={loading}>
-          {loading ? "Signing in..." : "Sign In"}
-        </button>
+        {success && <div className="alert alert-success">{success}</div>}
+
+        {tab === "login" ? (
+          <>
+            <div className="form-group" style={{ marginBottom: 14 }}>
+              <label>Username</label>
+              <input className="form-control" placeholder="Enter your username" value={loginForm.username} onChange={e => setLoginForm(f => ({ ...f, username: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleLogin()} autoComplete="username" />
+            </div>
+            <div className="form-group" style={{ marginBottom: 24 }}>
+              <label>Password</label>
+              <div style={{ position: "relative" }}>
+                <input className="form-control" type={showPass ? "text" : "password"} placeholder="Enter your password" value={loginForm.password} onChange={e => setLoginForm(f => ({ ...f, password: e.target.value }))} onKeyDown={e => e.key === "Enter" && handleLogin()} autoComplete="current-password" />
+                <button onClick={() => setShowPass(s => !s)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 16 }}>{showPass ? "🙈" : "👁️"}</button>
+              </div>
+            </div>
+            <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: 15 }} onClick={handleLogin} disabled={loading}>
+              {loading ? "Signing in..." : "🔐 Sign In"}
+            </button>
+            <div style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: COLORS.textLight }}>
+              Don't have an account? <span style={{ color: COLORS.primary, fontWeight: 700, cursor: "pointer" }} onClick={() => { setTab("signup"); setError(""); }}>Create one here</span>
+            </div>
+          </>
+        ) : (
+          <>
+            <div style={{ marginBottom: 14 }}>
+              <label style={{ fontSize: 12, fontWeight: 700, color: COLORS.textMid, marginBottom: 8, display: "block" }}>I am a... *</label>
+              <div className="role-select-grid">
+                {roles.map(r => (
+                  <div key={r.key} className={`role-option ${signupForm.role === r.key ? "selected" : ""}`} onClick={() => setSignupForm(f => ({ ...f, role: r.key }))}>
+                    <div className="role-option-icon">{r.icon}</div>
+                    <div className="role-option-label">{r.label}</div>
+                  </div>
+                ))}
+              </div>
+              {signupForm.role === "admin" && <div className="pending-notice">⏳ Admin accounts require Super Admin approval before activation.</div>}
+            </div>
+
+            <div className="form-grid">
+              <div className="form-group full-width"><label>Full Name *</label><input className="form-control" placeholder="Enter your full name" value={signupForm.name} onChange={e => setSignupForm(f => ({ ...f, name: e.target.value }))} /></div>
+              <div className="form-group"><label>Username *</label><input className="form-control" placeholder="Choose a username" value={signupForm.username} onChange={e => setSignupForm(f => ({ ...f, username: e.target.value }))} /></div>
+              <div className="form-group"><label>Gender</label><select className="form-control" value={signupForm.gender} onChange={e => setSignupForm(f => ({ ...f, gender: e.target.value }))}><option>Male</option><option>Female</option></select></div>
+              <div className="form-group full-width"><label>Email Address *</label><input className="form-control" type="email" placeholder="Enter your email" value={signupForm.email} onChange={e => setSignupForm(f => ({ ...f, email: e.target.value }))} /></div>
+              <div className="form-group full-width"><label>Phone Number</label><input className="form-control" placeholder="e.g. 08012345678" value={signupForm.phone} onChange={e => setSignupForm(f => ({ ...f, phone: e.target.value }))} /></div>
+
+              {signupForm.role === "student" && (
+                <div className="form-group full-width"><label>Admission Number</label><input className="form-control" placeholder="e.g. ADM/2024/001 (optional)" value={signupForm.admNo} onChange={e => setSignupForm(f => ({ ...f, admNo: e.target.value }))} /></div>
+              )}
+              {signupForm.role === "teacher" && (<>
+                <div className="form-group"><label>Staff ID</label><input className="form-control" placeholder="e.g. TCH001 (optional)" value={signupForm.staffId} onChange={e => setSignupForm(f => ({ ...f, staffId: e.target.value }))} /></div>
+                <div className="form-group"><label>Qualification</label><input className="form-control" placeholder="e.g. B.Sc Mathematics" value={signupForm.qualification} onChange={e => setSignupForm(f => ({ ...f, qualification: e.target.value }))} /></div>
+              </>)}
+
+              <div className="form-group">
+                <label>Password *</label>
+                <div style={{ position: "relative" }}>
+                  <input className="form-control" type={showPass ? "text" : "password"} placeholder="Min. 6 characters" value={signupForm.password} onChange={e => setSignupForm(f => ({ ...f, password: e.target.value }))} />
+                  <button onClick={() => setShowPass(s => !s)} style={{ position: "absolute", right: 10, top: "50%", transform: "translateY(-50%)", background: "none", border: "none", cursor: "pointer", fontSize: 14 }}>{showPass ? "🙈" : "👁️"}</button>
+                </div>
+              </div>
+              <div className="form-group"><label>Confirm Password *</label><input className="form-control" type="password" placeholder="Re-enter password" value={signupForm.confirmPassword} onChange={e => setSignupForm(f => ({ ...f, confirmPassword: e.target.value }))} /></div>
+            </div>
+
+            <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center", padding: "12px", fontSize: 15, marginTop: 8 }} onClick={handleSignup} disabled={loading}>
+              {loading ? "Creating account..." : "✅ Create Account"}
+            </button>
+            <div style={{ textAlign: "center", marginTop: 16, fontSize: 12, color: COLORS.textLight }}>
+              Already have an account? <span style={{ color: COLORS.primary, fontWeight: 700, cursor: "pointer" }} onClick={() => { setTab("login"); setError(""); }}>Sign in here</span>
+            </div>
+          </>
+        )}
       </div>
     </div>
   );
@@ -873,6 +1004,27 @@ const DashboardPage = ({ user, db }) => {
           </div>
         </div></div>
       </div>
+
+      {/* PENDING ACCOUNTS APPROVAL */}
+      {db.users.filter(u => u.status === "pending").length > 0 && (
+        <div className="card" style={{ marginTop: 20, border: `1px solid #FCD34D` }}>
+          <div className="card-body">
+            <div className="card-title" style={{ color: "#92400E" }}>⏳ Pending Account Approvals ({db.users.filter(u => u.status === "pending").length})</div>
+            {db.users.filter(u => u.status === "pending").map(u => (
+              <div key={u.id} style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "10px 0", borderBottom: "1px solid #F0F4F8", gap: 12, flexWrap: "wrap" }}>
+                <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                  <div className="avatar" style={{ fontSize: 12, background: "#92400E" }}>{u.name.split(" ").map(n => n[0]).join("").slice(0,2)}</div>
+                  <div><div style={{ fontSize: 13, fontWeight: 700 }}>{u.name}</div><div style={{ fontSize: 11, color: COLORS.textLight }}>{u.email} · @{u.username} · {u.role}</div></div>
+                </div>
+                <div style={{ display: "flex", gap: 6 }}>
+                  <button className="btn btn-success btn-sm" onClick={() => { setDb(d => ({ ...d, users: d.users.map(x => x.id === u.id ? { ...x, status: "active" } : x) })); toast(`${u.name} approved!`, "success"); }}>✅ Approve</button>
+                  <button className="btn btn-danger btn-sm" onClick={() => { setDb(d => ({ ...d, users: d.users.map(x => x.id === u.id ? { ...x, status: "inactive" } : x) })); toast(`${u.name} rejected.`); }}>❌ Reject</button>
+                </div>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
     </div>
   );
 };
@@ -2169,7 +2321,7 @@ export default function App() {
 
   const handleNav = (page) => { setCurrentPage(page); setSidebarOpen(false); };
 
-  if (!user) return (<><ToastContainer /><LoginPage onLogin={u => { setUser(u); setCurrentPage("dashboard"); }} /></>);
+  if (!user) return (<><ToastContainer /><LoginPage onLogin={u => { setUser(u); setCurrentPage("dashboard"); }} db={db} setDb={setDb} /></>);
 
   const pageProps = { user, db, setDb };
 
