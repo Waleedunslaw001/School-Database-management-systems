@@ -2503,14 +2503,345 @@ const AuditLogsPage = ({ db }) => {
 };
 
 // ============================================================
+// STORAGE HELPERS
+// ============================================================
+const STORAGE_KEY = "sba_school_db";
+const SESSION_KEY = "sba_logged_in_user";
+const BACKUP_KEY  = "sba_backup_";
+
+const saveToStorage = (data) => {
+  try {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(data));
+  } catch (e) {
+    console.warn("Storage full or unavailable:", e);
+  }
+};
+
+const loadFromStorage = () => {
+  try {
+    const raw = localStorage.getItem(STORAGE_KEY);
+    if (!raw) return null;
+    const parsed = JSON.parse(raw);
+    // Merge with initialDB to ensure any new keys added in updates are present
+    return { ...initialDB, ...parsed };
+  } catch (e) {
+    return null;
+  }
+};
+
+const saveSession = (user) => {
+  try { localStorage.setItem(SESSION_KEY, JSON.stringify(user)); } catch (e) {}
+};
+
+const loadSession = () => {
+  try {
+    const raw = localStorage.getItem(SESSION_KEY);
+    return raw ? JSON.parse(raw) : null;
+  } catch (e) { return null; }
+};
+
+const clearSession = () => {
+  try { localStorage.removeItem(SESSION_KEY); } catch (e) {}
+};
+
+const createBackup = (db) => {
+  try {
+    const key = BACKUP_KEY + new Date().toISOString().slice(0, 16).replace("T", "_").replace(":", "-");
+    const backup = { timestamp: new Date().toISOString(), data: db };
+    localStorage.setItem(key, JSON.stringify(backup));
+    // Keep only last 5 backups
+    const allKeys = Object.keys(localStorage).filter(k => k.startsWith(BACKUP_KEY)).sort();
+    if (allKeys.length > 5) {
+      allKeys.slice(0, allKeys.length - 5).forEach(k => localStorage.removeItem(k));
+    }
+    return key;
+  } catch (e) { return null; }
+};
+
+const listBackups = () => {
+  try {
+    return Object.keys(localStorage)
+      .filter(k => k.startsWith(BACKUP_KEY))
+      .sort()
+      .reverse()
+      .map(k => {
+        try {
+          const b = JSON.parse(localStorage.getItem(k));
+          return { key: k, timestamp: b.timestamp, data: b.data };
+        } catch (e) { return null; }
+      })
+      .filter(Boolean);
+  } catch (e) { return []; }
+};
+
+const exportBackup = (db) => {
+  const data = JSON.stringify({ timestamp: new Date().toISOString(), version: "1.0", data: db }, null, 2);
+  const blob = new Blob([data], { type: "application/json" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url;
+  a.download = `SBA_Backup_${new Date().toISOString().slice(0, 10)}.json`;
+  a.click();
+  URL.revokeObjectURL(url);
+};
+
+// ============================================================
+// DATA MANAGER MODAL
+// ============================================================
+const DataManagerModal = ({ db, setDb, onClose }) => {
+  const [tab, setTab] = useState("backup");
+  const [backups, setBackups] = useState(listBackups());
+  const [importError, setImportError] = useState("");
+  const [confirm, setConfirm] = useState(null);
+  const [storageInfo, setStorageInfo] = useState(null);
+
+  useEffect(() => {
+    // Calculate storage usage
+    try {
+      let used = 0;
+      for (let k in localStorage) {
+        if (localStorage.hasOwnProperty(k)) used += localStorage[k].length * 2;
+      }
+      setStorageInfo({ used: (used / 1024).toFixed(1), max: "5120" });
+    } catch (e) {}
+  }, []);
+
+  const handleManualBackup = () => {
+    createBackup(db);
+    setBackups(listBackups());
+    toast("✅ Backup created successfully!", "success");
+  };
+
+  const handleExport = () => {
+    exportBackup(db);
+    toast("✅ Backup file downloaded!", "success");
+  };
+
+  const handleRestore = (backup) => {
+    setConfirm({
+      msg: `Restore backup from ${new Date(backup.timestamp).toLocaleString()}? Current data will be replaced.`,
+      fn: () => {
+        setDb(backup.data);
+        saveToStorage(backup.data);
+        toast("✅ Data restored successfully!", "success");
+        setConfirm(null);
+        onClose();
+      }
+    });
+  };
+
+  const handleImport = (e) => {
+    const file = e.target.files[0];
+    if (!file) return;
+    const reader = new FileReader();
+    reader.onload = (ev) => {
+      try {
+        const parsed = JSON.parse(ev.target.result);
+        const data = parsed.data || parsed;
+        if (!data.users || !data.students) {
+          setImportError("❌ Invalid backup file format.");
+          return;
+        }
+        setConfirm({
+          msg: "Import this backup file? All current data will be replaced with the imported data.",
+          fn: () => {
+            const merged = { ...initialDB, ...data };
+            setDb(merged);
+            saveToStorage(merged);
+            toast("✅ Data imported successfully!", "success");
+            setConfirm(null);
+            onClose();
+          }
+        });
+      } catch (e) {
+        setImportError("❌ Could not read file. Make sure it is a valid SBA backup.");
+      }
+    };
+    reader.readAsText(file);
+  };
+
+  const handleReset = () => {
+    setConfirm({
+      msg: "⚠️ DANGER: This will DELETE ALL your school data and reset to factory defaults. This cannot be undone. Are you absolutely sure?",
+      fn: () => {
+        setDb(initialDB);
+        saveToStorage(initialDB);
+        clearSession();
+        toast("System reset to defaults.", "info");
+        setConfirm(null);
+        onClose();
+        window.location.reload();
+      }
+    });
+  };
+
+  const usedPct = storageInfo ? Math.min((storageInfo.used / storageInfo.max) * 100, 100).toFixed(0) : 0;
+
+  return (
+    <>
+      <div className="modal-overlay">
+        <div className="modal modal-lg">
+          <div className="modal-header">
+            <span className="modal-title">💾 Data Manager — Keep Your Data Safe</span>
+            <button className="modal-close" onClick={onClose}>×</button>
+          </div>
+          <div className="modal-body">
+
+            {/* STORAGE STATUS */}
+            {storageInfo && (
+              <div style={{ background: "#F0F4F8", borderRadius: 10, padding: "12px 16px", marginBottom: 20 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", marginBottom: 6 }}>
+                  <span style={{ fontSize: 13, fontWeight: 600 }}>🗄️ Browser Storage Used</span>
+                  <span style={{ fontSize: 13, fontWeight: 700, color: usedPct > 80 ? COLORS.danger : COLORS.success }}>{storageInfo.used} KB / {storageInfo.max} KB</span>
+                </div>
+                <div className="progress-bar">
+                  <div className="progress-fill" style={{ width: `${usedPct}%`, background: usedPct > 80 ? COLORS.danger : usedPct > 60 ? COLORS.warning : COLORS.success }} />
+                </div>
+                <div style={{ fontSize: 11, color: COLORS.textLight, marginTop: 4 }}>Data auto-saves every time you make a change. ✅</div>
+              </div>
+            )}
+
+            {/* TABS */}
+            <div className="auth-tabs" style={{ marginBottom: 20 }}>
+              {[["backup", "💾 Backup"], ["restore", "⏪ Restore"], ["import", "📂 Import"], ["danger", "⚠️ Reset"]].map(([key, label]) => (
+                <button key={key} className={`auth-tab ${tab === key ? "active" : ""}`} onClick={() => setTab(key)}>{label}</button>
+              ))}
+            </div>
+
+            {/* BACKUP TAB */}
+            {tab === "backup" && (
+              <div>
+                <div className="alert alert-info">ℹ️ Your data is automatically saved every time you make any change. Use manual backup or export for extra safety.</div>
+                <div className="grid-2" style={{ marginBottom: 20 }}>
+                  <div style={{ border: "1px solid #DDE3EE", borderRadius: 12, padding: 20, textAlign: "center" }}>
+                    <div style={{ fontSize: 36, marginBottom: 8 }}>💾</div>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>Create Local Backup</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 12 }}>Saves a snapshot in your browser. Up to 5 kept automatically.</div>
+                    <button className="btn btn-primary" style={{ width: "100%", justifyContent: "center" }} onClick={handleManualBackup}>Create Backup Now</button>
+                  </div>
+                  <div style={{ border: "1px solid #DDE3EE", borderRadius: 12, padding: 20, textAlign: "center" }}>
+                    <div style={{ fontSize: 36, marginBottom: 8 }}>📥</div>
+                    <div style={{ fontWeight: 700, marginBottom: 4 }}>Export to File</div>
+                    <div style={{ fontSize: 12, color: COLORS.textLight, marginBottom: 12 }}>Download a .json file to your phone/computer. Best for long-term safety.</div>
+                    <button className="btn btn-success" style={{ width: "100%", justifyContent: "center" }} onClick={handleExport}>Download Backup File</button>
+                  </div>
+                </div>
+                <div style={{ background: "#FEF3C7", border: "1px solid #FCD34D", borderRadius: 10, padding: 14, fontSize: 13 }}>
+                  <strong>💡 Best Practice:</strong> Export a backup file at the end of every term and save it to your Google Drive, email, or WhatsApp (send to yourself). This protects your data even if you switch browsers or devices.
+                </div>
+              </div>
+            )}
+
+            {/* RESTORE TAB */}
+            {tab === "restore" && (
+              <div>
+                <div className="alert alert-warning">⚠️ Restoring a backup will replace all current data with the backup data.</div>
+                {backups.length === 0 ? (
+                  <div className="empty-state">
+                    <div className="empty-icon">⏪</div>
+                    <div className="empty-title">No local backups yet</div>
+                    <div className="empty-desc">Go to the Backup tab and create your first backup</div>
+                  </div>
+                ) : backups.map((b, i) => (
+                  <div key={b.key} style={{ display: "flex", justifyContent: "space-between", alignItems: "center", padding: "12px 16px", border: "1px solid #DDE3EE", borderRadius: 10, marginBottom: 8 }}>
+                    <div>
+                      <div style={{ fontWeight: 700, fontSize: 14 }}>Backup #{backups.length - i}</div>
+                      <div style={{ fontSize: 12, color: COLORS.textLight }}>{new Date(b.timestamp).toLocaleString()}</div>
+                      <div style={{ fontSize: 11, color: COLORS.textLight, marginTop: 2 }}>
+                        {b.data?.students?.length || 0} students · {b.data?.teachers?.length || 0} teachers · {b.data?.users?.length || 0} users
+                      </div>
+                    </div>
+                    <button className="btn btn-primary btn-sm" onClick={() => handleRestore(b)}>⏪ Restore</button>
+                  </div>
+                ))}
+              </div>
+            )}
+
+            {/* IMPORT TAB */}
+            {tab === "import" && (
+              <div>
+                <div className="alert alert-info">ℹ️ Import a previously exported .json backup file to restore your data on a new browser or device.</div>
+                {importError && <div className="alert alert-danger">{importError}</div>}
+                <div style={{ border: "2px dashed #DDE3EE", borderRadius: 12, padding: 32, textAlign: "center" }}>
+                  <div style={{ fontSize: 48, marginBottom: 12 }}>📂</div>
+                  <div style={{ fontWeight: 700, marginBottom: 6 }}>Select Backup File</div>
+                  <div style={{ fontSize: 13, color: COLORS.textLight, marginBottom: 16 }}>Choose the .json file you exported earlier</div>
+                  <label style={{ cursor: "pointer" }}>
+                    <input type="file" accept=".json" style={{ display: "none" }} onChange={handleImport} />
+                    <span className="btn btn-primary">📂 Choose File</span>
+                  </label>
+                </div>
+                <div style={{ marginTop: 16, background: "#F0F4F8", borderRadius: 10, padding: 14, fontSize: 13 }}>
+                  <strong>How to use on a new device:</strong><br />
+                  1. Export backup on old device<br />
+                  2. Send .json file to yourself (WhatsApp, email, Google Drive)<br />
+                  3. Open SBA system on new device<br />
+                  4. Come here and import the file ✅
+                </div>
+              </div>
+            )}
+
+            {/* DANGER TAB */}
+            {tab === "danger" && (
+              <div>
+                <div className="alert alert-danger">⚠️ Actions in this section are permanent and cannot be undone.</div>
+                <div style={{ border: "2px solid #FEE2E2", borderRadius: 12, padding: 20 }}>
+                  <div style={{ fontWeight: 800, fontSize: 16, color: COLORS.danger, marginBottom: 8 }}>🗑️ Factory Reset</div>
+                  <div style={{ fontSize: 13, color: COLORS.textMid, marginBottom: 16 }}>This will permanently delete ALL school data including students, teachers, results, attendance, and accounts. The system will return to its default state.</div>
+                  <div className="alert alert-warning" style={{ marginBottom: 16 }}>💡 Please export a backup before resetting!</div>
+                  <button className="btn btn-danger" style={{ width: "100%", justifyContent: "center" }} onClick={handleReset}>⚠️ Reset Everything — I understand this cannot be undone</button>
+                </div>
+              </div>
+            )}
+          </div>
+        </div>
+      </div>
+      {confirm && <Confirm message={confirm.msg} onConfirm={confirm.fn} onCancel={() => setConfirm(null)} />}
+    </>
+  );
+};
+
+// ============================================================
 // MAIN APP
 // ============================================================
 export default function App() {
-  const [user, setUser] = useState(null);
+  // ── Load from localStorage on first render ──
+  const [db, setDbRaw] = useState(() => loadFromStorage() || initialDB);
+  const [user, setUser] = useState(() => {
+    const savedUser = loadSession();
+    if (!savedUser) return null;
+    // Re-verify user still exists and is active in db
+    const freshDb = loadFromStorage() || initialDB;
+    const found = freshDb.users.find(u => u.id === savedUser.id && u.status === "active");
+    return found || null;
+  });
   const [currentPage, setCurrentPage] = useState("dashboard");
   const [sidebarOpen, setSidebarOpen] = useState(false);
-  const [db, setDb] = useState(initialDB);
+  const [showDataManager, setShowDataManager] = useState(false);
+  const [lastSaved, setLastSaved] = useState(null);
 
+  // ── Auto-save to localStorage whenever db changes ──
+  const setDb = useCallback((updater) => {
+    setDbRaw(prev => {
+      const next = typeof updater === "function" ? updater(prev) : updater;
+      saveToStorage(next);
+      setLastSaved(new Date());
+      return next;
+    });
+  }, []);
+
+  // ── Auto-backup every 30 minutes ──
+  useEffect(() => {
+    const interval = setInterval(() => {
+      setDbRaw(current => {
+        createBackup(current);
+        return current;
+      });
+    }, 30 * 60 * 1000);
+    return () => clearInterval(interval);
+  }, []);
+
+  // ── Inject CSS ──
   useEffect(() => {
     const style = document.createElement("style");
     style.textContent = CSS;
@@ -2518,44 +2849,79 @@ export default function App() {
     return () => document.head.removeChild(style);
   }, []);
 
-  const pageTitles = { dashboard: "Dashboard", approvals: "User Approvals", students: "Students", teachers: "Teachers", classes: "Classes", subjects: "Subjects", sessions: "Academic Sessions", assessments: "Assessments", scores: "Score Entry", results: "Results", attendance: "Attendance", reportcards: "Report Cards", grading: "Grading System", analytics: "Analytics", auditlogs: "Audit Logs" };
+  // ── Warn user before closing tab if there's unsaved work ──
+  useEffect(() => {
+    const handler = (e) => {
+      e.preventDefault();
+      e.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, []);
 
-  const handleLogout = () => { setUser(null); setCurrentPage("dashboard"); setSidebarOpen(false); };
+  const pageTitles = {
+    dashboard: "Dashboard", approvals: "User Approvals",
+    students: "Students", teachers: "Teachers", classes: "Classes",
+    subjects: "Subjects", sessions: "Academic Sessions",
+    assessments: "Assessments", scores: "Score Entry",
+    results: "Results", attendance: "Attendance",
+    reportcards: "Report Cards", grading: "Grading System",
+    analytics: "Analytics", auditlogs: "Audit Logs"
+  };
+
+  const handleLogin = (u) => {
+    setUser(u);
+    saveSession(u);
+    setCurrentPage("dashboard");
+  };
+
+  const handleLogout = () => {
+    setUser(null);
+    clearSession();
+    setCurrentPage("dashboard");
+    setSidebarOpen(false);
+  };
 
   const handleNav = (page) => { setCurrentPage(page); setSidebarOpen(false); };
 
-  if (!user) return (<><ToastContainer /><LoginPage onLogin={u => { setUser(u); setCurrentPage("dashboard"); }} db={db} setDb={setDb} /></>);
+  if (!user) return (
+    <>
+      <ToastContainer />
+      <LoginPage onLogin={handleLogin} db={db} setDb={setDb} />
+    </>
+  );
 
   const pageProps = { user, db, setDb };
 
   const renderPage = () => {
     switch (currentPage) {
-      case "dashboard": return <DashboardPage {...pageProps} />;
-      case "approvals": return <ApprovalsPage db={db} setDb={setDb} />;
-      case "students": return <StudentsPage {...pageProps} />;
-      case "teachers": return <TeachersPage {...pageProps} />;
-      case "classes": return <ClassesPage {...pageProps} />;
-      case "subjects": return <SubjectsPage {...pageProps} />;
-      case "sessions": return <SessionsPage {...pageProps} />;
+      case "dashboard":    return <DashboardPage {...pageProps} />;
+      case "approvals":   return <ApprovalsPage db={db} setDb={setDb} />;
+      case "students":    return <StudentsPage {...pageProps} />;
+      case "teachers":    return <TeachersPage {...pageProps} />;
+      case "classes":     return <ClassesPage {...pageProps} />;
+      case "subjects":    return <SubjectsPage {...pageProps} />;
+      case "sessions":    return <SessionsPage {...pageProps} />;
       case "assessments": return <AssessmentsPage {...pageProps} />;
-      case "scores": return <ScoresPage {...pageProps} />;
-      case "results": return <ResultsPage {...pageProps} />;
-      case "attendance": return <AttendancePage {...pageProps} />;
+      case "scores":      return <ScoresPage {...pageProps} />;
+      case "results":     return <ResultsPage {...pageProps} />;
+      case "attendance":  return <AttendancePage {...pageProps} />;
       case "reportcards": return <ReportCardsPage {...pageProps} />;
-      case "grading": return <GradingPage {...pageProps} />;
-      case "analytics": return <AnalyticsPage {...pageProps} />;
-      case "auditlogs": return <AuditLogsPage {...pageProps} />;
-      default: return <DashboardPage {...pageProps} />;
+      case "grading":     return <GradingPage {...pageProps} />;
+      case "analytics":   return <AnalyticsPage {...pageProps} />;
+      case "auditlogs":   return <AuditLogsPage {...pageProps} />;
+      default:            return <DashboardPage {...pageProps} />;
     }
   };
 
   return (
     <>
       <ToastContainer />
+      {showDataManager && <DataManagerModal db={db} setDb={setDb} onClose={() => setShowDataManager(false)} />}
       <div className="app-root">
         <div className={`sidebar-overlay ${sidebarOpen ? "show" : ""}`} onClick={() => setSidebarOpen(false)} />
         <Sidebar user={user} currentPage={currentPage} onNav={handleNav} isOpen={sidebarOpen} db={db} />
-        <div className={`main-content ${sidebarOpen ? "" : ""}`}>
+        <div className="main-content">
           <header className="topbar">
             <div className="topbar-left">
               <button className="menu-toggle" onClick={() => setSidebarOpen(o => !o)}>☰</button>
@@ -2565,7 +2931,25 @@ export default function App() {
               </div>
             </div>
             <div className="topbar-right">
+              {/* Auto-save indicator */}
+              {lastSaved && (
+                <div style={{ fontSize: 11, color: COLORS.success, fontWeight: 600, display: "flex", alignItems: "center", gap: 4 }}>
+                  <span>✅</span>
+                  <span style={{ display: "none" }} className="save-time">Saved {lastSaved.toLocaleTimeString()}</span>
+                </div>
+              )}
               <div className="topbar-badge">📅 {db.academicSessions.find(s => s.isCurrent)?.name}</div>
+              {/* Data Manager button — only for superadmin/admin */}
+              {["superadmin", "admin"].includes(user.role) && (
+                <button
+                  className="btn btn-outline btn-sm"
+                  style={{ gap: 4, borderColor: COLORS.success, color: COLORS.success }}
+                  onClick={() => setShowDataManager(true)}
+                  title="Data Backup & Restore"
+                >
+                  💾 Data
+                </button>
+              )}
               <span className={`topbar-role-badge role-${user.role}`}>{user.role}</span>
               <button className="logout-btn" onClick={handleLogout}>Sign Out</button>
             </div>
